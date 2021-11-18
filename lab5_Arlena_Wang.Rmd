@@ -1,0 +1,114 @@
+---
+title: "Lab 5"
+author: "Arlena Wang"
+date: "11/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+accident <- read.csv("https://raw.githubusercontent.com/xdaiISU/ds202materials/master/hwlabs/fars2017/accident.csv", stringsAsFactors = FALSE)
+person <- read.csv("https://raw.githubusercontent.com/xdaiISU/ds202materials/master/hwlabs/fars2017/person.csv", stringsAsFactors = FALSE)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(tidyverse)
+library(stringr)
+library(lubridate)
+library(scales)
+library(readxl)
+```
+
+**1.) Create a data frame containing the persons who are fatally hurt in the accidents (see FARS manual and look up variable INJ_SEV)**
+
+```{r}
+fatality <- person %>%
+  filter(INJ_SEV == 4)
+```
+
+**2.) Create a data frame containing the most dangerous vehicle make in each state. The number of persons fatally hit in the vehicle make is used to assess the (non-)safety of a make. Make sure to handle the missing values appropriately. (look up variable MAKE) **
+
+```{r}
+vehicle <- fatality %>%
+  group_by(STATE, MAKE) %>%
+  summarise(numfatal = n())
+vehicle <- vehicle %>%
+  na.omit() %>%
+  group_by(STATE) %>%
+  filter(numfatal == max(numfatal))
+```
+
+**3.) Create a map, and label each state with the most dangerous vehicle. Discuss the definition of the most dangerous vehicle, and what you find from the map. (Hint: Read the description for the STATE and COUNTY columns in the FARS manual. The state & county codes are Geographic Locator Codes (GLCs) from the General Services Administration’s (GSA) publication. Use readxl::read_xlsx to read in the GLCs.)**
+
+```{r}
+GLCs <- readxl::read_xlsx("FRPP_GLC_-_United_StatesNOV42021.xlsx")
+States <- map_data('state')
+GLCs$`State Name` <- tolower(GLCs$`State Name`)
+GLCs$`State Code` <- as.numeric(GLCs$`State Code`)
+labels <- States %>%
+  group_by(region) %>%
+  summarise(long= mean(long, na.rm=TRUE), lat=mean(lat, na.rm=TRUE))
+labels <- left_join(labels, GLCs, by = c("region" = "State Name"))
+labels <- left_join(labels, vehicle, by = c("State Code" = "STATE"))
+labels$MAKE <- factor(labels$MAKE, levels = c(12, 20, 49, 37),
+                      labels=c("Ford", "Chevrolet", "Toyota", "Honda"))
+
+States %>%
+  ggplot() + geom_polygon(aes(x=long, y=lat, group=group), color="grey", fill="blue") +
+  geom_text(data=labels, aes(label = MAKE, x=long, y=lat), color="black", size=3) + labs(x="Longitude", y="Latitude", title="Dangerous Vehicles")
+```
+
+**Definition:** This data element identifies the most common vehicle in accidents that occurred, within each state.  The codes are from the General Services Administration’s (GSA) publication of worldwide Geographic Location
+Codes (GLC).
+
+**It seems that the most dangerous vehicle is a Chevrolet, closely followed by Ford. Chevrolet is more common in the north, central, Midwest, and east side of the US, while Ford is the more common dangerous vehicle towards the west and south.**
+
+**4.) Join the accident and person table (work out which variable(s) to use)**
+
+```{r}
+dat <- person %>%
+  inner_join(accident %>%
+               select(ST_CASE, DAY_WEEK),
+             by=c("ST_CASE"))
+```
+
+**5.) Tally the number of accidents by day of the week (DAY_WEEK), hour of the day (HOUR) and gender (SEX). Visualize the results and explain what you find.**
+
+```{r}
+time <- dat %>%
+  group_by(ST_CASE) %>%
+  summarise(sex=mean(SEX))
+time$sex <- ifelse(time$sex==1, "Male", ifelse(time$sex==2, "Female", "Unknown"))
+dat <- time %>%
+  select(ST_CASE,sex) %>%
+  inner_join(accident, by="ST_CASE")
+time <- dat %>%
+  filter(HOUR <=24) %>%
+  filter(DAY_WEEK != 9) %>%
+  group_by(sex, HOUR, day=wday(DAY_WEEK, label = TRUE)) %>%
+  summarise(accidents=n()) %>%
+  arrange(desc(accidents))
+
+ggplot(time, aes(x=HOUR, y=accidents)) + geom_bar(stat="identity") + facet_grid(sex~day) + labs(x="Hours of the Day", y="Total Number of Accidents", title="Accident Statistics")
+```
+
+**It seems that there are significantly less amount of accidents that involves females vs. males.  It also seems that there are more accidents that occur at night as the graphs tend to increase near the beginning and end of the hours from 15-20 hours and 0-5 hours which is the time during evening and night and early morning.  The graphs for Friday, Saturday, and Sunday, are slightly higher than the weekdays, Monday-Thursday.  These statistics make sense because people tend to go out during the weekends versus the weekdays as they have things to do and worry about.  Males may have more accidents than females because they can be less careful.**
+
+**6.) Now plot a choropleth map of the number of deaths on a county level. Also explain what you find.**
+
+```{r}
+deaths <- accident %>%
+  inner_join(fatality %>%
+               select(INJ_SEV, ST_CASE),
+             by=c("ST_CASE")) %>%
+  summarize(INJ_SEV, ST_CASE, LATITUDE, LONGITUD, STATE)
+
+ggplot(States, aes(x=long, y=lat)) + geom_polygon(aes(group=group)) + geom_point(aes(x=LONGITUD, y=LATITUDE), data=deaths %>% filter(INJ_SEV == 4), color='lightgreen', alpha=0.2, size=0.02) + xlim(-130, -60) + ylim(20, 50) + coord_map() + labs(x="Longitude", y="Latitude", title="Number of Deaths in a County")
+```
+
+**It is apparent that there are significantly more deaths that occur on the east coast versus the west coast of the US.**
